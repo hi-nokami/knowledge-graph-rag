@@ -1,0 +1,198 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "project": "knowledge-graph-rag",
+  "version": "1.0.0",
+  "description": "Sequential task breakdown for Project 1: Knowledge Graph RAG swarm implementation",
+  "tasks": [
+    {
+      "id": "task-1",
+      "name": "Environment & Infrastructure Setup",
+      "description": "Initialize git repository within knowledge-graph-rag/, configure Python packaging and virtual environment with uv (pyproject.toml), configure docker-compose.yml for Neo4j (ports 7474, 7687) and PostgreSQL with pgvector (port 5432), and configure integration with _shared/ollama_helper.py without duplicating shared code.",
+      "target_files": [
+        "knowledge-graph-rag/.gitignore",
+        "knowledge-graph-rag/pyproject.toml",
+        "knowledge-graph-rag/docker-compose.yml",
+        "knowledge-graph-rag/README.md",
+        "knowledge-graph-rag/src/__init__.py",
+        "knowledge-graph-rag/src/config.py"
+      ],
+      "dependencies": [],
+      "test_targets": [
+        "uv --version",
+        "docker compose config",
+        "python -c \"import sys; sys.path.append('../_shared'); import ollama_helper; print('Shared helper accessible')\""
+      ],
+      "acceptance_criteria": [
+        "Git repository initialized inside knowledge-graph-rag/ with appropriate .gitignore.",
+        "pyproject.toml specifies Python 3.11+ and all project dependencies (pgvector, psycopg2-binary, neo4j, openai, pydantic, fastapi, uvicorn, pytest, datasets, tqdm, python-dotenv).",
+        "Virtual environment (.venv) initialized using uv venv and synced.",
+        "docker-compose.yml defines Neo4j (ports 7474, 7687) and PostgreSQL + pgvector (port 5432) with healthy configurations and volume persistence.",
+        "src/config.py defines environment configurations and loads settings dynamically."
+      ]
+    },
+    {
+      "id": "task-2",
+      "name": "Vector Store & Embeddings Module",
+      "description": "Implement recursive document chunking, Ollama embedding integration (nomic-embed-text, 768 dimensions), PostgreSQL + pgvector client with schema initialization, HNSW index creation with cosine similarity, and chunk retrieval with metadata filtering.",
+      "target_files": [
+        "knowledge-graph-rag/src/chunker.py",
+        "knowledge-graph-rag/src/embeddings.py",
+        "knowledge-graph-rag/src/vector_store.py"
+      ],
+      "dependencies": [
+        "task-1"
+      ],
+      "test_targets": [
+        "pytest tests/test_chunker.py",
+        "pytest tests/test_vector_store.py"
+      ],
+      "acceptance_criteria": [
+        "src/chunker.py implements recursive character text splitting with configurable chunk size (~1000 chars) and overlap (~200 chars), assigning unique deterministic chunk_ids.",
+        "src/embeddings.py produces 768-dimensional embeddings using nomic-embed-text via Ollama API.",
+        "src/vector_store.py initializes document_chunks and entity_mentions tables with HNSW cosine index (vector_cosine_ops, m=16, ef_construction=64).",
+        "Provides functions to insert chunks, batch embed, perform cosine similarity search (top-k), and filter by metadata."
+      ]
+    },
+    {
+      "id": "task-3",
+      "name": "Knowledge Graph Module & Extraction Pipeline",
+      "description": "Implement the Neo4j client with constraint and index initialization, domain ontology definition (Company, Person, Product, Location, FinancialMetric), LLM-based structured entity/relation extraction using Ollama, entity resolution with canonical normalization and alias merging, and a parameterized Cypher template registry.",
+      "target_files": [
+        "knowledge-graph-rag/src/neo4j_client.py",
+        "knowledge-graph-rag/src/ontology.py",
+        "knowledge-graph-rag/src/extractor.py",
+        "knowledge-graph-rag/src/entity_resolver.py",
+        "knowledge-graph-rag/src/cypher_templates.py"
+      ],
+      "dependencies": [
+        "task-1",
+        "task-2"
+      ],
+      "test_targets": [
+        "pytest tests/test_ontology.py",
+        "pytest tests/test_extractor.py",
+        "pytest tests/test_neo4j_client.py"
+      ],
+      "acceptance_criteria": [
+        "src/neo4j_client.py connects to Neo4j and initializes uniqueness constraints and indexes for canonical names and chunk_ids.",
+        "src/ontology.py defines Pydantic models for entities, relationships, and extraction schemas.",
+        "src/extractor.py extracts entities and relations from text chunks conforming strictly to the ontology schema.",
+        "src/entity_resolver.py normalizes names (stripping legal suffixes) and merges aliases into canonical nodes.",
+        "Graph ingestion uses idempotent Cypher MERGE queries; every relationship stores source_chunk_id.",
+        "src/cypher_templates.py provides safe parameterized query templates (shared suppliers, multi-hop paths, subsidiary chains, neighborhoods) preventing raw LLM Cypher execution."
+      ]
+    },
+    {
+      "id": "task-4",
+      "name": "Hybrid Retriever & Reranker/Fusion Module",
+      "description": "Implement the lightweight query router (qwen2.5:1.5b), knowledge graph path traversal with statement serialization, backing chunk retrieval via source_chunk_id, and Reciprocal Rank Fusion (RRF) to combine vector search and graph retrieval streams.",
+      "target_files": [
+        "knowledge-graph-rag/src/router.py",
+        "knowledge-graph-rag/src/graph_retriever.py",
+        "knowledge-graph-rag/src/hybrid_retriever.py",
+        "knowledge-graph-rag/src/fusion.py"
+      ],
+      "dependencies": [
+        "task-2",
+        "task-3"
+      ],
+      "test_targets": [
+        "pytest tests/test_router.py",
+        "pytest tests/test_fusion.py",
+        "pytest tests/test_hybrid_retriever.py"
+      ],
+      "acceptance_criteria": [
+        "src/router.py classifies questions into VECTOR, GRAPH, or BOTH with a safe fallback to BOTH on uncertainty.",
+        "src/graph_retriever.py resolves entities, selects Cypher templates, serializes graph paths into verbalized statements, and fetches backing chunks by source_chunk_id.",
+        "src/fusion.py implements Reciprocal Rank Fusion (RRF) with constant k=60 to merge and rank vector chunks and graph backing chunks.",
+        "src/hybrid_retriever.py coordinates the routing, dual-channel retrieval, and fusion into a single queryable interface."
+      ]
+    },
+    {
+      "id": "task-5",
+      "name": "End-to-End RAG Generation Pipeline & API",
+      "description": "Implement context assembly with labeled graph and text sections, answer synthesis with claim-level citations using qwen3:8b via Ollama, post-generation citation validation to detect hallucinated chunk IDs, and FastAPI REST API exposing query, ingestion, and health endpoints.",
+      "target_files": [
+        "knowledge-graph-rag/src/generator.py",
+        "knowledge-graph-rag/src/citation_validator.py",
+        "knowledge-graph-rag/src/pipeline.py",
+        "knowledge-graph-rag/src/api.py"
+      ],
+      "dependencies": [
+        "task-4"
+      ],
+      "test_targets": [
+        "pytest tests/test_citation_validator.py",
+        "pytest tests/test_pipeline.py",
+        "pytest tests/test_api.py"
+      ],
+      "acceptance_criteria": [
+        "src/generator.py constructs structured prompts with separated '=== Graph-Derived Relationships ===' and '=== Retrieved Text Passages ===' and calls qwen3:8b via Ollama.",
+        "Generated answers include per-claim citations formatted as [source: <chunk_id>].",
+        "src/citation_validator.py validates that every cited chunk_id exists in the retrieved context set and detects fabricated sources.",
+        "src/api.py provides FastAPI endpoints: POST /query, POST /index, and GET /health with latency metrics."
+      ]
+    },
+    {
+      "id": "task-6",
+      "name": "Comprehensive Test Suite",
+      "description": "Author complete unit and integration tests under knowledge-graph-rag/tests/ covering all modules, mocks for offline testing, and end-to-end pipeline verification.",
+      "target_files": [
+        "knowledge-graph-rag/tests/__init__.py",
+        "knowledge-graph-rag/tests/conftest.py",
+        "knowledge-graph-rag/tests/test_chunker.py",
+        "knowledge-graph-rag/tests/test_vector_store.py",
+        "knowledge-graph-rag/tests/test_ontology.py",
+        "knowledge-graph-rag/tests/test_extractor.py",
+        "knowledge-graph-rag/tests/test_neo4j_client.py",
+        "knowledge-graph-rag/tests/test_router.py",
+        "knowledge-graph-rag/tests/test_fusion.py",
+        "knowledge-graph-rag/tests/test_hybrid_retriever.py",
+        "knowledge-graph-rag/tests/test_citation_validator.py",
+        "knowledge-graph-rag/tests/test_pipeline.py",
+        "knowledge-graph-rag/tests/test_api.py"
+      ],
+      "dependencies": [
+        "task-1",
+        "task-2",
+        "task-3",
+        "task-4",
+        "task-5"
+      ],
+      "test_targets": [
+        "pytest tests/ -v"
+      ],
+      "acceptance_criteria": [
+        "All test files are stored under knowledge-graph-rag/tests/.",
+        "Unit tests exercise logic with mock fixtures so test suite can execute reliably.",
+        "Integration tests verify end-to-end flows against active services when available.",
+        "pytest passes with zero failures when executed by the verifier role."
+      ]
+    },
+    {
+      "id": "task-7",
+      "name": "MultiHopRAG Benchmark Evaluation Script",
+      "description": "Author benchmark harness using a 100-item evaluation slice from Hugging Face 'yixuantt/MultiHopRAG' stratified by hop count (1-hop, 2-hop, 3-hop, aggregation). Evaluate accuracy, citation validity, and latency comparing Hybrid KG-RAG vs Vector-only baseline, and export comparative Markdown table.",
+      "target_files": [
+        "knowledge-graph-rag/benchmarks/__init__.py",
+        "knowledge-graph-rag/benchmarks/multihop_benchmark.py",
+        "knowledge-graph-rag/benchmarks/data/multihop_sample_100.json",
+        "knowledge-graph-rag/benchmarks/results/benchmark_report.json",
+        "knowledge-graph-rag/benchmarks/results/benchmark_table.md"
+      ],
+      "dependencies": [
+        "task-5",
+        "task-6"
+      ],
+      "test_targets": [
+        "python benchmarks/multihop_benchmark.py --dry-run"
+      ],
+      "acceptance_criteria": [
+        "Curate a 100-item evaluation slice from MultiHopRAG dataset stratified into 1-hop, 2-hop, 3-hop, and aggregation categories.",
+        "multihop_benchmark.py runs both Vector-only baseline and Hybrid KG-RAG on all 100 items.",
+        "Records accuracy, p50/p95 latency, and citation precision per hop tier.",
+        "Generates benchmark_report.json and benchmark_table.md documenting the accuracy curve and latency tradeoff."
+      ]
+    }
+  ]
+}
