@@ -58,6 +58,7 @@ def run_benchmark(
     output_dir: Path,
     limit: int | None = None,
     dry_run: bool = False,
+    in_memory: bool = False,
 ):
     """Run comparative benchmark on dataset slice."""
     with open(data_path, "r", encoding="utf-8") as f:
@@ -77,9 +78,27 @@ def run_benchmark(
     offline_mode = not ollama_active
     print(f"Ollama server active: {ollama_active} (offline_mode={offline_mode})")
 
-    # Initialize in-memory pipeline for reproducible, fast benchmark
-    store = PgVectorStore(in_memory=True)
-    graph = Neo4jClient(in_memory=True)
+    # Check live Docker containers (Neo4j and pgvector)
+    neo4j_active = False
+    try:
+        test_neo = Neo4jClient(in_memory=False)
+        neo4j_active = test_neo.init_schema()
+        test_neo.close()
+    except Exception:
+        neo4j_active = False
+
+    pgvector_active = False
+    try:
+        test_pg = PgVectorStore(in_memory=False)
+        pgvector_active = test_pg.init_db()
+    except Exception:
+        pgvector_active = False
+
+    use_live_containers = (neo4j_active and pgvector_active) and not in_memory
+    print(f"Docker containers active: Neo4j={neo4j_active}, pgvector={pgvector_active} (use_live_containers={use_live_containers})")
+
+    store = PgVectorStore(in_memory=not use_live_containers)
+    graph = Neo4jClient(in_memory=not use_live_containers)
     embeddings = OllamaEmbeddings(use_fallback_if_unavailable=True, offline_mode=offline_mode)
     extractor = EntityExtractor(use_heuristics_fallback=True, offline_mode=offline_mode)
     router = QueryRouter(use_heuristics_fallback=True, offline_mode=offline_mode)
@@ -106,15 +125,18 @@ def run_benchmark(
     # 1. Ingest all documents into dual stores
     print("Ingesting benchmark corpus...")
     t0 = time.perf_counter()
+    seen_docs = set()
     for item in dataset:
         for doc in item.get("corpus", []):
-            pipeline.ingest_document(
-                doc_id=doc["doc_id"],
-                text=doc["text"],
-                metadata=doc.get("metadata", {}),
-            )
+            if doc["doc_id"] not in seen_docs:
+                seen_docs.add(doc["doc_id"])
+                pipeline.ingest_document(
+                    doc_id=doc["doc_id"],
+                    text=doc["text"],
+                    metadata=doc.get("metadata", {}),
+                )
     ingest_time = round(time.perf_counter() - t0, 3)
-    print(f"Ingested corpus in {ingest_time}s.")
+    print(f"Ingested {len(seen_docs)} corpus documents in {ingest_time}s.")
 
     categories = ["1-hop", "2-hop", "3-hop", "aggregation"]
     cat_metrics = {
@@ -162,8 +184,8 @@ def run_benchmark(
         metrics["vector_precisions"].append(v_resp.citation_report.citation_precision)
         metrics["hybrid_precisions"].append(h_resp.citation_report.citation_precision)
 
-        if idx % 20 == 0 or idx == len(dataset):
-            print(f"Processed {idx}/{len(dataset)} items...")
+        if idx % 5 == 0 or idx == len(dataset):
+            print(f"Processed {idx}/{len(dataset)} items... (v_lat={v_lat:.1f}ms, h_lat={h_lat:.1f}ms)", flush=True)
 
     # 3. Aggregate results
     report = {
@@ -219,17 +241,19 @@ def run_benchmark(
     }
 
     # 4. Write benchmark report JSON and Markdown Table
+    mean_citation_prec = statistics.mean([report['categories'][c]['hybrid_citation_precision'] for c in categories]) * 100.0
+
     table_md = f"""# MultiHopRAG Evaluation Benchmark: Hybrid KG-RAG vs. Vector-Only Baseline
 
 *Evaluation on 100-item stratified slice from MultiHopRAG (1-hop, 2-hop, 3-hop, and entity aggregation).*
 
 | Question Category | Hop Count | Vector-Only Accuracy | Hybrid KG-RAG Accuracy | Accuracy Gain (Δ) | Vector p50 (ms) | Hybrid p50 (ms) | Citation Precision |
 |:-------------------|:---------:|:--------------------:|:----------------------:|:-----------------:|:---------------:|:---------------:|:------------------:|
-| **1-Hop Factoid**  | 1         | {report['categories']['1-hop']['vector_accuracy']*100:.1f}% | {report['categories']['1-hop']['hybrid_accuracy']*100:.1f}% | +{report['categories']['1-hop']['accuracy_delta']*100:.1f}% | {report['categories']['1-hop']['vector_p50_ms']}ms | {report['categories']['1-hop']['hybrid_p50_ms']}ms | {report['categories']['1-hop']['hybrid_citation_precision']*100:.1f}% |
-| **2-Hop Relational**| 2        | {report['categories']['2-hop']['vector_accuracy']*100:.1f}% | {report['categories']['2-hop']['hybrid_accuracy']*100:.1f}% | +{report['categories']['2-hop']['accuracy_delta']*100:.1f}% | {report['categories']['2-hop']['vector_p50_ms']}ms | {report['categories']['2-hop']['hybrid_p50_ms']}ms | {report['categories']['2-hop']['hybrid_citation_precision']*100:.1f}% |
-| **3-Hop Relational**| 3        | {report['categories']['3-hop']['vector_accuracy']*100:.1f}% | {report['categories']['3-hop']['hybrid_accuracy']*100:.1f}% | +{report['categories']['3-hop']['accuracy_delta']*100:.1f}% | {report['categories']['3-hop']['vector_p50_ms']}ms | {report['categories']['3-hop']['hybrid_p50_ms']}ms | {report['categories']['3-hop']['hybrid_citation_precision']*100:.1f}% |
-| **Aggregation**    | Agg       | {report['categories']['aggregation']['vector_accuracy']*100:.1f}% | {report['categories']['aggregation']['hybrid_accuracy']*100:.1f}% | +{report['categories']['aggregation']['accuracy_delta']*100:.1f}% | {report['categories']['aggregation']['vector_p50_ms']}ms | {report['categories']['aggregation']['hybrid_p50_ms']}ms | {report['categories']['aggregation']['hybrid_citation_precision']*100:.1f}% |
-| **Overall**        | —         | **{report['overall']['overall_vector_accuracy']*100:.1f}%** | **{report['overall']['overall_hybrid_accuracy']*100:.1f}%** | **+{report['overall']['overall_accuracy_gain']*100:.1f}%** | **{report['overall']['vector_median_latency_ms']}ms** | **{report['overall']['hybrid_median_latency_ms']}ms** | **100.0%** |
+| **1-Hop Factoid**  | 1         | {report['categories']['1-hop']['vector_accuracy']*100:.1f}% | {report['categories']['1-hop']['hybrid_accuracy']*100:.1f}% | {report['categories']['1-hop']['accuracy_delta']*100:+.1f}% | {report['categories']['1-hop']['vector_p50_ms']}ms | {report['categories']['1-hop']['hybrid_p50_ms']}ms | {report['categories']['1-hop']['hybrid_citation_precision']*100:.1f}% |
+| **2-Hop Relational**| 2        | {report['categories']['2-hop']['vector_accuracy']*100:.1f}% | {report['categories']['2-hop']['hybrid_accuracy']*100:.1f}% | {report['categories']['2-hop']['accuracy_delta']*100:+.1f}% | {report['categories']['2-hop']['vector_p50_ms']}ms | {report['categories']['2-hop']['hybrid_p50_ms']}ms | {report['categories']['2-hop']['hybrid_citation_precision']*100:.1f}% |
+| **3-Hop Relational**| 3        | {report['categories']['3-hop']['vector_accuracy']*100:.1f}% | {report['categories']['3-hop']['hybrid_accuracy']*100:.1f}% | {report['categories']['3-hop']['accuracy_delta']*100:+.1f}% | {report['categories']['3-hop']['vector_p50_ms']}ms | {report['categories']['3-hop']['hybrid_p50_ms']}ms | {report['categories']['3-hop']['hybrid_citation_precision']*100:.1f}% |
+| **Aggregation**    | Agg       | {report['categories']['aggregation']['vector_accuracy']*100:.1f}% | {report['categories']['aggregation']['hybrid_accuracy']*100:.1f}% | {report['categories']['aggregation']['accuracy_delta']*100:+.1f}% | {report['categories']['aggregation']['vector_p50_ms']}ms | {report['categories']['aggregation']['hybrid_p50_ms']}ms | {report['categories']['aggregation']['hybrid_citation_precision']*100:.1f}% |
+| **Overall**        | —         | **{report['overall']['overall_vector_accuracy']*100:.1f}%** | **{report['overall']['overall_hybrid_accuracy']*100:.1f}%** | **{report['overall']['overall_accuracy_gain']*100:+.1f}%** | **{report['overall']['vector_median_latency_ms']}ms** | **{report['overall']['hybrid_median_latency_ms']}ms** | **{mean_citation_prec:.1f}%** |
 
 ### Key Takeaways
 1. **Multi-Hop Advantage**: For 2-hop and 3-hop relational queries, Knowledge Graph RAG substantially out-performs vector search by explicitly following graph edges rather than relying on chance co-occurrence in vector embedding space.
@@ -267,10 +291,11 @@ if __name__ == "__main__":
     parser.add_argument("--out", type=str, default=str(PROJECT_ROOT / "benchmarks" / "results"), help="Output directory for reports")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of queries evaluated")
     parser.add_argument("--dry-run", action="store_true", help="Perform fast dry run on small slice")
+    parser.add_argument("--in-memory", action="store_true", help="Force in-memory mode")
     args = parser.parse_args()
 
     data_p = Path(args.data)
     out_p = Path(args.out)
     limit = 10 if args.dry_run else args.limit
 
-    run_benchmark(data_path=data_p, output_dir=out_p, limit=limit, dry_run=args.dry_run)
+    run_benchmark(data_path=data_p, output_dir=out_p, limit=limit, dry_run=args.dry_run, in_memory=args.in_memory)

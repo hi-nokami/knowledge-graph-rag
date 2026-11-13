@@ -203,8 +203,8 @@ class Neo4jClient:
             return self.merge_relationship(rel, source_chunk_id)
 
         query = f"""
-        MATCH (s:{source_label} {{canonical_name: $source_canon}})
-        MATCH (t:{target_label} {{canonical_name: $target_canon}})
+        MERGE (s:{source_label} {{canonical_name: $source_canon}})
+        MERGE (t:{target_label} {{canonical_name: $target_canon}})
         MERGE (s)-[r:{rel_type}]->(t)
         ON CREATE SET
             r.source_chunk_id = $source_chunk_id,

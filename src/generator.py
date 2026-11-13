@@ -11,7 +11,7 @@ if str(_SHARED_DIR) not in sys.path:
 from src.config import settings
 from src.fusion import FusedChunk
 
-SYSTEM_PROMPT = """You are a factual research assistant. Answer the user question strictly using the provided context.
+SYSTEM_PROMPT = """You are a factual research assistant. Answer the user question concisely in 1-2 direct sentences strictly using the provided context.
 For every factual claim you make, you MUST cite the source chunk using the format [source: <chunk_id>].
 If the provided context does not contain sufficient information, state that the question cannot be answered."""
 
@@ -42,7 +42,7 @@ class AnswerGenerator:
                 self._client = OpenAI(
                     base_url=self.base_url,
                     api_key="ollama",
-                    timeout=1.5,
+                    timeout=60.0,
                 )
             except Exception:
                 self._client = None
@@ -98,7 +98,15 @@ class AnswerGenerator:
                     temperature=0.1,
                     max_tokens=512,
                 )
-                return resp.choices[0].message.content or ""
+                msg = resp.choices[0].message
+                content = msg.content or ""
+                if not content.strip() and getattr(msg, "reasoning", None):
+                    # In reasoning models (like qwen3:8b), if answer was truncated to reasoning buffer
+                    r_lines = [l.strip() for l in msg.reasoning.strip().split("\n") if l.strip()]
+                    if r_lines:
+                        content = r_lines[-1]
+                if content.strip():
+                    return content.strip()
             except Exception:
                 if not self.use_fallback_if_unavailable:
                     raise

@@ -8,11 +8,11 @@ Hybrid Retrieval-Augmented Generation pairing native Property Graphs (**Neo4j**)
 
 | Question Category | Hop Count | Vector-Only Accuracy | Hybrid KG-RAG Accuracy | Accuracy Gain (Δ) | Vector p50 (ms) | Hybrid p50 (ms) | Citation Precision |
 |:-------------------|:---------:|:--------------------:|:----------------------:|:-----------------:|:---------------:|:---------------:|:------------------:|
-| **1-Hop Factoid**  | 1         | 0.0% | 0.0% | +0.0% | 16.08ms | 16.38ms | 100.0% |
-| **2-Hop Relational**| 2        | 0.0% | 0.0% | +0.0% | 16.10ms | 16.37ms | 100.0% |
-| **3-Hop Relational**| 3        | 8.0% | 8.0% | +0.0% | 16.17ms | 16.41ms | 100.0% |
-| **Aggregation**    | Agg       | 12.0% | 12.0% | +0.0% | 16.15ms | 16.36ms | 100.0% |
-| **Overall**        | —         | **5.0%** | **5.0%** | **+0.0%** | **16.11ms** | **16.38ms** | **100.0%** |
+| **1-Hop Factoid**  | 1         | 52.0% | 16.0% | -36.0% | 5484.52ms | 6031.70ms | 76.0% |
+| **2-Hop Relational**| 2        | 36.0% | 40.0% | +4.0% | 8183.94ms | 11041.16ms | 92.0% |
+| **3-Hop Relational**| 3        | 68.0% | 32.0% | -36.0% | 9779.76ms | 10794.23ms | 76.0% |
+| **Aggregation**    | Agg       | 96.0% | 72.0% | -24.0% | 7917.07ms | 7222.25ms | 84.0% |
+| **Overall**        | —         | **63.0%** | **40.0%** | **-23.0%** | **8154.87ms** | **7987.39ms** | **82.0%** |
 
 ## Architecture
 

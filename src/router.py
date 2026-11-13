@@ -68,7 +68,7 @@ class QueryRouter:
                 self._client = OpenAI(
                     base_url=self.base_url,
                     api_key="ollama",
-                    timeout=1.5,
+                    timeout=30.0,
                 )
             except Exception:
                 self._client = None

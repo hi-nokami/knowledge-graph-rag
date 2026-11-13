@@ -64,7 +64,10 @@ class PgVectorStore:
             import psycopg2
             from pgvector.psycopg2 import register_vector
             conn = psycopg2.connect(self.dsn, connect_timeout=2)
-            register_vector(conn)
+            try:
+                register_vector(conn)
+            except Exception:
+                pass
             return conn
         except Exception:
             return None
@@ -87,7 +90,15 @@ class PgVectorStore:
             with conn.cursor() as cur:
                 cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
                 cur.execute("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";")
+                conn.commit()
 
+            try:
+                from pgvector.psycopg2 import register_vector
+                register_vector(conn)
+            except Exception:
+                pass
+
+            with conn.cursor() as cur:
                 cur.execute(f"""
                 CREATE TABLE IF NOT EXISTS document_chunks (
                     id SERIAL PRIMARY KEY,
